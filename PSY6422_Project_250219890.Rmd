@@ -1,0 +1,214 @@
+---
+title: "Project"
+output: html_document
+date: "2025-12-12"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	echo = TRUE,
+	message = FALSE,
+	warning = FALSE
+)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+```
+
+# Data Visualization
+
+## Origins
+
+The data was collected from gov.uk website (Search and rescue helicopter statistics: data tables (SARH) - GOV.UK), and I have downloaded the "SAR0114: Breakdown of location by base" file. This file includes search and rescue responses, defined as tasking, collected by the Aeronautical Rescue Coordination Centre (ARCC). While this company recorded resonses based on other variables, the file I have downloaded measures tasking across tasking locations (search and rescue bases) and locations type (tasking locations) through 2017-2025.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+#install the packages
+install.packages("readODS")
+install.packages("tidyverse") 
+install.packages("dplyr")
+install.packages("naniar")
+install.packages("ggplot2")
+install.packages("plotly")
+
+#load the packages
+library(tidyverse)
+library(dplyr)
+library(naniar)
+library(ggplot2)
+library(readODS)
+library(plotly)
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#load dataframe 
+data <- readODS::read_ods("raw data/sarh0114.ods", 2, range = "A6:O166")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#name of variables
+names(data)
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#view the first rows of raw data
+head(data)
+```
+
+## Research Question
+
+The visualizations will attempt to answer "Over the years, where are the most search and rescue tasks occurring?". The visualization will look at the high scores of tasks depending on the bases and location of the search and rescue tasks.
+
+## Data Preparation
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+
+str(data) #view structure of data
+glimpse(data) #view data types
+
+#join columns
+joined_columns <- data %>% 
+  mutate(
+    year_quarter = paste(Year, Quarter, sep = " ")) %>% 
+  select(year_quarter, everything(), -Year, -Quarter)
+
+str(joined_columns) #view structure of data
+glimpse(joined_columns) #view data types?
+view(joined_columns)
+
+#convert variable as categorical
+clean_data<- joined_columns %>% 
+  mutate(
+    Tasking_Location = as.factor(`Tasking Location Type`),
+    Portland = as.numeric(Portland)
+    )
+
+str(clean_data)  
+
+#view any missing variables and filter out any NA
+colSums(is.na(clean_data))
+#filter NA 
+filtered_data<- clean_data %>% 
+  select_if(~ !any(is.na(.)))
+
+#reorder data and filter out         
+reordered_data<- filtered_data %>% 
+  select(year_quarter, 
+         Tasking_Location,
+         everything(),
+         -`Tasking Location Type`
+  )
+
+#removal of subsets
+subsets_data<- reordered_data %>% 
+  filter(Tasking_Location != "Total") %>% #deleted total level
+  select(-Total) #deleted total variable
+
+view(subsets_data) #view the data
+str(subsets_data) #view structure of data
+glimpse(subsets_data)
+
+#pivot the data
+pivot_data<- subsets_data %>% 
+  pivot_longer(
+    cols = c(Caernarfon:Sumburgh),
+    names_to = "base",
+    values_to = "score"#excluded total and pivoted data
+  )
+
+```
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+#summary of data
+summary(pivot_data)
+
+#summary table
+pivot_data %>%
+  group_by(base) %>%              
+  summarise(
+    mean_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE),
+    n = n(),
+    min_score = min(score, na.rm = TRUE),
+    max_score = max(score, na.rm = TRUE)
+  )
+
+# function to identify outliers
+outlier_function <- function(x) {
+Quantile_1 <- quantile(x, 0.25, na.rm = TRUE)
+Quantile_3 <- quantile(x, 0.75, na.rm = TRUE)
+IQR <- Quantile_3-Quantile_1
+lower <- Quantile_1 - 1.5*IQR
+upper <- Quantile_3 + 1.5*IQR
+return(x[x < lower | x > upper])
+}
+
+#removed outliers
+outlier_function(pivot_data$score)
+
+#function to filter outliers and return a cleaned data
+outlier_fun <- function(x) {
+  Quantile_1 <- quantile(x, 0.25, na.rm = TRUE)
+  Quantile_3 <- quantile(x, 0.75, na.rm = TRUE)
+  IQR <- Quantile_3-Quantile_1
+  lower <- Quantile_1 - 1.5*IQR
+  upper <- Quantile_3 + 1.5*IQR
+  return(x[x >= lower | x <= upper]) 
+}
+
+#removed outliers
+outlier_fun(pivot_data$score)
+
+#name the cleaned data
+df<- outlier_fun(pivot_data$score)
+
+#saved cleaned data
+clean_df <- pivot_data[pivot_data$score %in% df, ]
+
+#view the strucutres and data types
+view(clean_df)
+str(clean_df)
+glimpse(clean_df)
+
+# summary table of cleaned data
+clean_df %>%
+  group_by(base) %>%              
+  summarise(
+    mean_score = mean(score, na.rm = TRUE),
+    sd_score = sd(score, na.rm = TRUE),
+    n = n(),
+    min_score = min(score, na.rm = TRUE),
+    max_score = max(score, na.rm = TRUE)
+  )
+
+#summary of cleaned data
+summary(clean_df)
+
+#rename the dataframe
+processed_df<- clean_df
+
+#view first few rows of processed data
+head(processed_df)
+
+#save copy of processed data
+write.csv(processed_df, "processed_df.csv", row.names = FALSE)
+```
+
+## Visualization
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#visualisation of stacked bar graph 
+p_bar<- ggplot(processed_df, 
+       aes(x = factor(year_quarter),
+           y = score,
+           fill = base))+
+  geom_bar(stat = "identity",
+           position = "stack")+
+  facet_wrap(~ Tasking_Location)+
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 0.5))
+ggplotly(p_bar, tooltip = "text")
+```
+
+## Summary
+
+The results show that Caernaron base had the highest recorded number of search and rescues tasks between April to June 2024. However, they scored the highest across an "Other" tasking location type, suggesting either the tasking location was not identified, or the search and rescue locations occurred in a mixture of different place. However, the graph do show that Carenarfon base conducted the highest number of search and rescue tasks across different locations and different time points. This project has been very engaging, and it was interesting to see where search and rescues occur. However, if I had more time to complete the project, I would have liked to inspect the data types, and
